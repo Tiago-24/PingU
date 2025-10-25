@@ -1,0 +1,74 @@
+---
+- hosts: master
+  become: yes
+  become_user: root
+  become_method: sudo
+
+  vars:
+    kubeconfig: /etc/kubernetes/admin.conf
+    manifests:
+      - shared_env.yaml 
+      - pv-databases.yaml
+      - user-service.yaml
+      - message-service.yaml
+      - group-service.yaml
+      - frontend-service.yaml
+      - ingress.yaml
+
+  tasks:
+
+    - name: Ensure manifests dir
+      file:
+        path: /root/manifests
+        state: directory
+        mode: "0755"
+
+    - name: Copy manifests
+      copy:
+        src: "{{ item }}"
+        dest: "/root/manifests/{{ item }}"
+        mode: "0644"
+      loop: "{{ manifests }}"
+
+    # --------------------------------------------------------------------
+    # 1️⃣ Instalar o Ingress Controller
+    # --------------------------------------------------------------------
+    - name: Install ingress-nginx (baremetal)
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        set -e
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.2/deploy/static/provider/baremetal/deploy.yaml
+        kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=300s
+
+    # Espera até o admission webhook estar pronto (evita erro 503 ao aplicar ingress.yaml)
+    - name: Wait for admission Service endpoints
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl -n ingress-nginx get endpoints ingress-nginx-controller-admission -o jsonpath='{.subsets[0].addresses[0].ip}'
+      register: admission_ep
+      retries: 30
+      delay: 5
+      until: admission_ep.stdout != ""
+
+    # --------------------------------------------------------------------
+    # 2️⃣Aplicar Shared Env e Storage Config
+    # --------------------------------------------------------------------
+    - name: Apply shared environment
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl apply -f /root/manifests/shared_env.yaml
+
+    - name: Apply PVs and StorageClasses
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        kubectl apply -f /root/manifests/pv-databases.yaml
+
+    # --------------------------------------------------------------------
+    # 3️⃣ Aplicar serviços e deployments
+    # --------------------------------------------------------------------
+    - name: Apply all application manifests
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        kubectl apply -f /root/manifests/user-service.yaml
+        kubectl apply -f /root/manifests/message-service.yaml
+        kubectl apply -f /root/manifests/group-service.yaml
+        kubectl apply -f /root/manifests/frontend-service.yaml
+        kubectl apply -f /root/manifests/ingress.yaml

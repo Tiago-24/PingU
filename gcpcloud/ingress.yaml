@@ -1,0 +1,103 @@
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: web-ingress
+#   annotations:
+#     nginx.ingress.kubernetes.io/use-regex: "true"
+#     nginx.ingress.kubernetes.io/rewrite-target: /$1
+    
+# spec:
+#   ingressClassName: nginx
+#   rules:
+#     - http:
+#         paths:
+
+#           # APIs — strip /api/user|message|group prefix before proxying
+#           - path: /api/user
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: user-service
+#                 port:
+#                   number: 8001
+
+#           - path: /api/message
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: message-service
+#                 port:
+#                   number: 8000
+
+#           - path: /api/group
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: group-service
+#                 port:
+#                   number: 8002
+#           # Frontend SPA (served by the CRA dev server on 3000)
+#           - path: /(.*)
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: frontend
+#                 port:
+#                   number: 3000
+
+# Frontend ingress — no rewrite
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+---
+# API ingress — rewrite paths to strip /api/user, /api/message, /api/group
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api/user(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8001
+
+          - path: /api/message(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: message-service
+                port:
+                  number: 8000
+
+          - path: /api/group(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: group-service
+                port:
+                  number: 8002

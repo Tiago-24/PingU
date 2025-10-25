@@ -1,0 +1,109 @@
+---
+- hosts: master
+  become: yes
+  become_user: root
+
+  vars:
+    kube_ns: monitoring
+    kubeconfig: /etc/kubernetes/admin.conf
+    values_src: /root/gcpcloud/monitoring/values-monitoring.yaml
+    values_dst: /root/monitoring/values-monitoring.yaml
+    monitors_dir_src: /root/gcpcloud/monitoring/servicemonitors
+    monitors_dir_dst: /root/monitoring/servicemonitors
+    dashboards_dir_src: /root/gcpcloud/monitoring/dashboards
+    dashboards_dir_dst: /root/monitoring/dashboards
+
+  tasks:
+    # --- Namespace & setup -----------------------------------------------------
+    - name: Ensure monitoring namespace exists
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl get ns {{ kube_ns }} || kubectl create ns {{ kube_ns }}
+
+    - name: Ensure working dir for monitoring assets
+      file:
+        path: /root/monitoring
+        state: directory
+        mode: "0755"
+
+    - name: Install Helm if missing
+      shell: |
+        if ! command -v helm >/dev/null 2>&1; then
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        fi
+
+    # --- Clean up old Grafana bits --------------------------------------------
+    - name: Clean up old Grafana deployments before reinstall
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        kubectl delete deploy -n {{ kube_ns }} -l app.kubernetes.io/name=grafana --ignore-not-found=true
+        kubectl delete pods -n {{ kube_ns }} -l app.kubernetes.io/name=grafana --ignore-not-found=true
+        kubectl delete configmap -n {{ kube_ns }} -l grafana_dashboard=1 --ignore-not-found=true
+        kubectl delete configmap -n {{ kube_ns }} -l grafana_datasource=1 --ignore-not-found=true
+
+    # --- Helm installation -----------------------------------------------------
+    - name: Copy Helm values
+      copy:
+        src: "{{ values_src }}"
+        dest: "{{ values_dst }}"
+        mode: "0644"
+
+    - name: Helm repo add / update
+      shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+        helm repo update
+
+    - name: Deploy or upgrade kube-prometheus-stack
+      shell: |
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          -n {{ kube_ns }} -f {{ values_dst }}
+
+    # --- Wait for Grafana to be ready -----------------------------------------
+    - name: Wait for Grafana pod rollout
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl -n {{ kube_ns }} rollout status deploy/monitoring-grafana --timeout=300s
+
+    # --- ServiceMonitors ------------------------------------------------------
+    - name: Ensure ServiceMonitors dir exists
+      file:
+        path: "{{ monitors_dir_dst }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy ServiceMonitor files
+      copy:
+        src: "{{ monitors_dir_src }}/"
+        dest: "{{ monitors_dir_dst }}/"
+        mode: "0644"
+
+    - name: Apply ServiceMonitors
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl apply -f {{ monitors_dir_dst }}
+
+    # --- Dashboards -----------------------------------------------------------
+    - name: Ensure dashboards dir exists
+      file:
+        path: "{{ dashboards_dir_dst }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy dashboards to master
+      copy:
+        src: "{{ dashboards_dir_src }}/"
+        dest: "{{ dashboards_dir_dst }}/"
+        mode: "0644"
+
+    - name: Create or update dashboards ConfigMap
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        kubectl -n {{ kube_ns }} create configmap team-microservices-dashboards \
+          --from-file={{ dashboards_dir_dst }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Label ConfigMap so Grafana sidecar loads it
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: kubectl -n {{ kube_ns }} label configmap team-microservices-dashboards grafana_dashboard=1 --overwrite
+
+    - name: Verify dashboards loaded
+      environment: { KUBECONFIG: "{{ kubeconfig }}" }
+      shell: |
+        kubectl logs -n {{ kube_ns }} -l app.kubernetes.io/name=grafana -c grafana-sc-dashboard | tail -n 20

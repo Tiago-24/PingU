@@ -1,0 +1,32 @@
+/* GLOBAL RESET - kills white borders & scrollbars */
+
+html,
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden !important;
+  border: none !important;
+  background-color: #0b1220 !important; /* 👈 apply same bg everywhere */
+  color: green;
+}
+
+#root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background-color: #0b1220;
+  overflow: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

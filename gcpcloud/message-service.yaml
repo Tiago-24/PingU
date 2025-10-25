@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: message-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: message-storage
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-secrets
+type: Opaque
+stringData:
+  SECRET_KEY: supersecretkey
+  ALGORITHM: HS256
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-urls
+data:
+  MESSAGE_SERVICE_URL: http://message-service:8000
+  USER_SERVICE_URL: http://user-service:8001
+  GROUP_SERVICE_URL: http://group-service:8002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-db
+spec:
+  selector:
+    app: message-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: message-db
+  template:
+    metadata:
+      labels:
+        app: message-db
+    spec:
+      nodeName: worker3
+      containers:
+        - name: postgres
+          image: postgres:14
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: messageuser
+            - name: POSTGRES_PASSWORD
+              value: messagepass
+            - name: POSTGRES_DB
+              value: messagedb
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "messageuser", "-d", "messagedb", "-h", "127.0.0.1"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: message-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-service
+  labels:
+    app: message-service
+spec:
+  selector:
+    app: message-service
+  type: ClusterIP        # NodePort not needed; frontend calls via DNS
+  ports:
+    - name: http-metrics
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: message-service
+  template:
+    metadata:
+      labels:
+        app: message-service
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: postgres:14
+          command: ["sh", "-c", "until pg_isready -h message-db -p 5432 -U messageuser -d messagedb; do echo waiting for db; sleep 2; done"]
+      containers:
+        - name: message-service
+          image: agisit/message-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: service-urls
+            - secretRef:
+                name: jwt-secrets
+          env:
+            - name: DATABASE_URL
+              value: postgres://messageuser:messagepass@message-db:5432/messagedb
+          readinessProbe:
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10

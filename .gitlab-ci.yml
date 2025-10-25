@@ -1,0 +1,79 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_BUILDKIT: 1
+  GCP_ZONE: "us-west1-c"
+  GCP_PROJECT: "agisit25-g33"
+
+before_script:
+  - echo "🔥 Starting CI/CD pipeline for AGI Project Chat Microservices"
+
+# ==========================================
+# 🏗️ Build Images
+# ==========================================
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - echo "🔐 Logging into Docker Hub as $DOCKERHUB_USER"
+    - echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+    - apk add --no-cache bash
+    - cd scripts
+    - bash push_images.sh agisit
+    - echo "✅ All images built and pushed to Docker Hub"
+  only:
+    - master
+    - main
+    - CI/CD
+
+# ==========================================
+# 🚀 Deploy to Self-Managed Cluster (via SSH)
+# ==========================================
+deploy-to-cluster:
+  stage: deploy
+  image: google/cloud-sdk:latest
+  before_script:
+    - echo "🔐 Setting up GCP authentication"
+    - apt-get update -qq && apt-get install -y -qq kubectl openssh-client
+    - echo "$GCP_SERVICE_ACCOUNT_KEY" > /tmp/gcp-key.json
+    - gcloud auth activate-service-account --key-file /tmp/gcp-key.json
+    - gcloud config set project "$GCP_PROJECT"
+    - gcloud config set compute/zone "$GCP_ZONE"
+    - export MASTER_IP=$(gcloud compute instances list --filter="name=('master')" --format="value(EXTERNAL_IP)")
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $MASTER_IP >> ~/.ssh/known_hosts
+  script:
+    - echo "🚀 Deploying updated services to Kubernetes cluster at $MASTER_IP"
+    - |
+      ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa tiago_f_raposo@$MASTER_IP << 'EOF'
+        echo "⚙️ Starting rolling update on cluster (Pipeline ID: $CI_PIPELINE_ID)..."
+
+        # ✅ UPDATE: Usa sempre 'latest' em vez de CI_PIPELINE_ID
+        sudo kubectl set image deployment/frontend frontend-app=agisit/frontend:latest
+        sudo kubectl set image deployment/user-service user-service=agisit/user-service:latest
+        sudo kubectl set image deployment/group-service group-service=agisit/group-service:latest
+        sudo kubectl set image deployment/message-service message-service=agisit/message-service:latest
+
+        echo "⏳ Waiting for rollouts to complete..."
+        sudo kubectl rollout status deployment/frontend --timeout=300s
+        sudo kubectl rollout status deployment/user-service --timeout=300s
+        sudo kubectl rollout status deployment/group-service --timeout=300s
+        sudo kubectl rollout status deployment/message-service --timeout=300s
+
+        echo "✅ Rollouts finished successfully (Pipeline ID: $CI_PIPELINE_ID)!"
+        sudo kubectl get pods -o wide
+      EOF
+  only:
+    - master
+    - main
+    - CI/CD

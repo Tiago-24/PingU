@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-urls
+data:
+  MESSAGE_SERVICE_URL: http://message-service:8000
+  USER_SERVICE_URL: http://user-service:8001
+  GROUP_SERVICE_URL: http://group-service:8002

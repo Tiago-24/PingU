@@ -1,0 +1,123 @@
+# -------------------------------
+# USER DATABASE PV + PVC
+# -------------------------------
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-user-db
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/user-db-data
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - worker1
+  # ADICIONA: Claim Reference para binding explícito
+  claimRef:
+    name: user-db-pvc
+    namespace: default
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: user-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # ADICIONA: Volume Name para binding explícito
+  volumeName: pv-user-db
+
+# -------------------------------
+# GROUP DATABASE PV + PVC
+# -------------------------------
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-group-db
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/group-db-data
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - worker2
+  claimRef:
+    name: group-db-pvc
+    namespace: default
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: group-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: pv-group-db
+
+# -------------------------------
+# MESSAGE DATABASE PV + PVC
+# -------------------------------
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-message-db
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /mnt/message-db-data
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - worker3
+  claimRef:
+    name: message-db-pvc
+    namespace: default
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: message-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: pv-message-db

@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: group-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # REMOVE storageClassName - não é necessário com PV estático
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-secrets
+type: Opaque
+stringData:
+  SECRET_KEY: supersecretkey
+  ALGORITHM: HS256
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-urls
+data:
+  MESSAGE_SERVICE_URL: http://message-service:8000
+  USER_SERVICE_URL: http://user-service:8001
+  GROUP_SERVICE_URL: http://group-service:8002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: group-db
+spec:
+  selector:
+    app: group-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: group-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: group-db
+  template:
+    metadata:
+      labels:
+        app: group-db
+    spec:
+      # ADICIONA nodeName para forçar no worker com o disco
+      nodeName: worker2
+      containers:
+        - name: postgres
+          image: postgres:14
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: groupuser
+            - name: POSTGRES_PASSWORD
+              value: grouppass
+            - name: POSTGRES_DB
+              value: groupdb
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "groupuser", "-d", "groupdb", "-h", "127.0.0.1"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: group-db-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: group-service
+  labels:
+    app: group-service
+spec:
+  selector:
+    app: group-service
+  type: NodePort
+  ports:
+    - name: http-metrics
+      port: 8002
+      targetPort: 8002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: group-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: group-service
+  template:
+    metadata:
+      labels:
+        app: group-service
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: postgres:14
+          command: ["sh", "-c", "until pg_isready -h group-db -p 5432 -U groupuser -d groupdb; do echo waiting for db; sleep 2; done"]
+      containers:
+        - name: group-service
+          image: agisit/group-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: service-urls
+            - secretRef:
+                name: jwt-secrets
+          readinessProbe:
+            tcpSocket: { port: 8002 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 8002 }
+            initialDelaySeconds: 10
+            periodSeconds: 10

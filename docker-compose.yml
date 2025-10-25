@@ -1,0 +1,99 @@
+services:
+  message-service:
+    build: ./message-service
+    ports:
+      - "8000:8000"
+    environment:
+    - SECRET_KEY=supersecretkey
+    - ALGORITHM=HS256
+    env_file:
+      - .env
+    depends_on:
+      message-db:
+        condition: service_healthy
+
+  user-service:
+    build: ./user-service
+    ports:
+      - "8001:8001"
+    environment:
+    - SECRET_KEY=supersecretkey
+    - ALGORITHM=HS256
+    env_file:
+      - .env
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+  group-service:
+    build: ./group-service
+    ports:
+      - "8002:8002"
+    environment:
+    - SECRET_KEY=supersecretkey
+    - ALGORITHM=HS256
+    env_file:
+      - .env
+    depends_on:
+      group-db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    networks:
+      - default
+
+
+  # ---- DATABASES ----
+  message-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: messageuser
+      POSTGRES_PASSWORD: messagepass
+      POSTGRES_DB: messagedb
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db/message-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U messageuser -d messagedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  user-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: useruser
+      POSTGRES_PASSWORD: userpass
+      POSTGRES_DB: userdb
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./db/user-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U useruser -d userdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  group-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: groupuser
+      POSTGRES_PASSWORD: grouppass
+      POSTGRES_DB: groupdb
+    ports:
+      - "5435:5432"
+    volumes:
+      - ./db/group-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groupuser -d groupdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

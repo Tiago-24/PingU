@@ -1,0 +1,51 @@
+grafana:
+  adminUser: admin
+  adminPassword: "admin33"
+
+  service:
+    type: NodePort
+    port: 3000
+    targetPort: 3000
+    nodePort: 32000
+
+  persistence:
+    enabled: false
+
+  # 🔧 não queremos sidecar de datasources nem defaults automáticos
+  sidecar:
+    datasources:
+      enabled: false
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+  defaultDatasourceEnabled: false
+  defaultDashboardsEnabled: false
+
+  # ✅ Define diretamente a datasource principal
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus-Live
+          type: prometheus
+          access: proxy
+          url: http://monitoring-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+          isDefault: true
+          editable: true
+
+  dashboards:
+    default:
+      node-exporter:
+        gnetId: 1860
+        revision: 33
+        datasource: Prometheus-Live
+      k8s-cluster:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus-Live
+      kube-state:
+        gnetId: 13332
+        revision: 12
+        datasource: Prometheus-Live

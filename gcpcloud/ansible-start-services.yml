@@ -1,0 +1,177 @@
+---
+- name: Deploy services and local Postgres (DB first)
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+
+  vars:
+    service_map:
+      worker1: message-service
+      worker2: user-service
+      worker3: group-service
+      worker4: frontend
+
+    image_map:
+      frontend: agisit/frontend:latest
+      message-service: agisit/message-service:latest
+      user-service: agisit/user-service:latest
+      group-service: agisit/group-service:latest
+
+    port_map:
+      frontend: { container: 3000, host: 3000 }
+      message-service: { container: 8000, host: 8000 }
+      user-service: { container: 8001, host: 8001 }
+      group-service: { container: 8002, host: 8002 }
+
+    db_defs:
+      message-service:
+        container_name: message-db
+        db: messagedb
+        user: messageuser
+        pass: messagepass
+      user-service:
+        container_name: user-db
+        db: userdb
+        user: useruser
+        pass: userpass
+      group-service:
+        container_name: group-db
+        db: groupdb
+        user: groupuser
+        pass: grouppass
+
+    docker_network: svc-net
+    env_src: ".env"
+
+  tasks:
+    - name: Determine assigned service
+      set_fact:
+        assigned_service: "{{ service_map[inventory_hostname] | default('') }}"
+
+    - name: Skip host with no service
+      meta: end_host
+      when: assigned_service == ""
+
+    - name: Ensure docker installed
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+
+    - name: Ensure service dir
+      file:
+        path: "/home/ubuntu/services/{{ assigned_service }}"
+        state: directory
+        owner: ubuntu
+        mode: "0755"
+
+    - name: Copy shared env file
+      copy:
+        src: "{{ env_src }}"
+        dest: "/home/ubuntu/services/{{ assigned_service }}/.env"
+        owner: ubuntu
+        mode: "0600"
+
+    - name: Ensure DB data dir
+      file:
+        path: "/home/ubuntu/services/{{ assigned_service }}/db-data"
+        state: directory
+        owner: ubuntu
+        mode: "0755"
+      when: assigned_service in db_defs
+
+    - name: Ensure docker network
+      command: "docker network create {{ docker_network }}"
+      register: net_create
+      failed_when: net_create.rc != 0 and 'already exists' not in net_create.stderr
+      changed_when: "'already exists' not in net_create.stderr"
+
+    - name: Pull app image
+      command: docker pull {{ image_map[assigned_service] }}
+      register: pull_app
+      changed_when: >
+        "Downloaded newer image" in pull_app.stdout
+        or "Status: Downloaded" in pull_app.stdout
+        or "newer image" in pull_app.stderr
+
+    - name: Pull postgres image
+      command: docker pull postgres:14
+      when: assigned_service in db_defs
+      register: pull_pg
+      changed_when: >
+        assigned_service in db_defs and
+        (
+          "Downloaded newer image" in pull_pg.stdout
+          or "Status: Downloaded" in pull_pg.stdout
+          or "newer image" in pull_pg.stderr
+        )
+
+    - name: Create systemd unit for DB
+      copy:
+        dest: "/etc/systemd/system/{{ db_defs[assigned_service].container_name }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Postgres {{ db_defs[assigned_service].container_name }} for {{ assigned_service }}
+          After=docker.service
+          Requires=docker.service
+
+          [Service]
+          Restart=always
+          ExecStartPre=-/usr/bin/docker rm -f {{ db_defs[assigned_service].container_name }}
+          ExecStart=/usr/bin/docker run --name {{ db_defs[assigned_service].container_name }} \
+            --network {{ docker_network }} \
+            -e POSTGRES_USER={{ db_defs[assigned_service].user }} \
+            -e POSTGRES_PASSWORD={{ db_defs[assigned_service].pass }} \
+            -e POSTGRES_DB={{ db_defs[assigned_service].db }} \
+            -v /home/ubuntu/services/{{ assigned_service }}/db-data:/var/lib/postgresql/data \
+            -v /home/ubuntu/services/{{ assigned_service }}/init.sql:/docker-entrypoint-initdb.d/init.sql:ro \
+            postgres:14
+          ExecStop=/usr/bin/docker stop {{ db_defs[assigned_service].container_name }}
+
+          [Install]
+          WantedBy=multi-user.target
+      when: assigned_service in db_defs
+      notify: reload systemd
+
+    - name: Enable & start DB
+      systemd:
+        name: "{{ db_defs[assigned_service].container_name }}"
+        enabled: yes
+        state: started
+      when: assigned_service in db_defs
+
+    - name: Create systemd unit for app
+      copy:
+        dest: "/etc/systemd/system/{{ assigned_service }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description={{ assigned_service }} container
+          After=docker.service{{ ' ' + db_defs[assigned_service].container_name + '.service' if assigned_service in db_defs else '' }}
+          Requires=docker.service
+
+          [Service]
+          Restart=always
+          ExecStartPre=-/usr/bin/docker rm -f {{ assigned_service }}
+          ExecStart=/usr/bin/docker run --name {{ assigned_service }} \
+            --network {{ docker_network }} \
+            --env-file /home/ubuntu/services/{{ assigned_service }}/.env \
+            -p {{ port_map[assigned_service].host }}:{{ port_map[assigned_service].container }} \
+            {{ image_map[assigned_service] }}
+          ExecStop=/usr/bin/docker stop {{ assigned_service }}
+          TimeoutStartSec=0
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: reload systemd
+
+    - name: Enable & start app
+      systemd:
+        name: "{{ assigned_service }}"
+        enabled: yes
+        state: restarted
+
+  handlers:
+    - name: reload systemd
+      command: systemctl daemon-reload
