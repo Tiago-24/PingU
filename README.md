@@ -78,3 +78,4 @@ It explains how to:
 - Run Terraform and Ansible automation  
 - Deploy and access the full microservices application  
 
+> _“If it builds, deploys, and pings — it’s alive.”_
