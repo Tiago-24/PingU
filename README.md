@@ -71,7 +71,7 @@ This creates a fully functional, cloud-native environment with end-to-end automa
 ## 📘 Deployment
 
 To deploy and run this system, please refer to the detailed guide:  
-👉 [**how-to-deploy/deployment.md**](how-to-deploy/deployment.md)
+👉 [**how-to-deploy/deployment.md**](how-to-deploy/README.md)
 
 It explains how to:
 - Authenticate with GCP  
